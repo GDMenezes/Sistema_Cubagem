@@ -17,7 +17,11 @@ class ItemBobina:
     formato_mm: int  # altura da bobina
     diametro_mm: int  # diâmetro da bobina
     quantidade: int
+    formato_real_mm: int = None  # calculado automaticamente se não informado
 
+    def __post_init__(self):
+        if self.formato_real_mm is None:
+            self.formato_real_mm = calcular_formato_real(self.formato_mm, self.tipo_papel)
 
 def calcular_posicoes_por_fiada(largura_veiculo_mm: int, diametro_mm: int) -> int:
     """Quantas bobinas cabem lado a lado na largura do veículo (esq/centro/dir)."""
@@ -39,7 +43,6 @@ def calcular_lastro(veiculo: Veiculo, diametro_mm: int) -> dict:
         "posicoes_por_fiada": posicoes,
         "capacidade_lastro": capacidade,
     }
-
 
 def calcular_secao_diametro_maior(veiculo: Veiculo, diametro_maior_mm: int, quantidade_desejada: int) -> dict:
     """Calcula quantas fiadas e qual comprimento a seção do diâmetro maior vai ocupar."""
@@ -127,7 +130,7 @@ def gerar_trilhas(diametro_mm: int) -> list:
 def rotulo_celula(item: ItemBobina) -> str:
     """Gera o texto exibido no quadradinho: ícone + formato/primeiro dígito do diâmetro."""
     primeiro_digito = str(item.diametro_mm)[0]
-    icone = "🟦" if item.tipo_papel == "Tissue" else "🟩"
+    icone = "🟦" if item.tipo_papel == "Branca" else "🟩"
     return f"{icone} {item.formato_mm}/{primeiro_digito}"
 
 
@@ -135,14 +138,14 @@ def pode_empilhar(item_superior: ItemBobina, item_inferior: ItemBobina) -> bool:
     """Valida a regra de empilhamento: mesmo diâmetro + Mono nunca sobre Tissue."""
     if item_superior.diametro_mm != item_inferior.diametro_mm:
         return False
-    if item_superior.tipo_papel == "Mono" and item_inferior.tipo_papel == "Tissue":
+    if item_superior.tipo_papel == "Marron" and item_inferior.tipo_papel == "Branca":
         return False
     return True
 
 def calcular_altura_fiada_mm(grade: dict, trilha: str, fiada: int) -> int:
     """Soma o formato (altura) de todas as bobinas empilhadas numa trilha/fiada específica."""
     return sum(
-        item.formato_mm
+        item.formato_real_mm
         for (t, f, n), item in grade.items()
         if t == trilha and f == fiada
     )
@@ -179,7 +182,7 @@ def gerar_pdf_cubagem(buffer, veiculo, itens, grade, mapa_fiadas, total_fiadas, 
 
     largura_pagina, altura_pagina = landscape(A4)
     c = canvas.Canvas(buffer, pagesize=landscape(A4))
-    margem = 1.5 * cm
+    margem = 1.0 * cm
     y = altura_pagina - margem
 
     # --- Cabeçalho ---
@@ -195,13 +198,13 @@ def gerar_pdf_cubagem(buffer, veiculo, itens, grade, mapa_fiadas, total_fiadas, 
     )
     y -= 0.5 * cm
 
-    # --- Total de bobinas por trilha ---
+    # --- Total de bobinas por trilha (ordem: Esquerda / Centro / Direita) ---
     total_por_trilha = _defaultdict(int)
     for (trilha_chave, _f, _n) in grade.keys():
         total_por_trilha[trilha_chave] += 1
 
     partes_trilha = []
-    for trilha_chave in ["esquerda", "centro", "direita"]:
+    for trilha_chave in ["direita", "centro", "esquerda"]:  # internamente invertido -> exibe Esquerda/Centro/Direita
         if trilha_chave in total_por_trilha:
             nome_exib = NOME_EXIBICAO_PDF[trilha_chave]
             partes_trilha.append(f"{nome_exib}: {total_por_trilha[trilha_chave]} bobinas")
@@ -209,41 +212,57 @@ def gerar_pdf_cubagem(buffer, veiculo, itens, grade, mapa_fiadas, total_fiadas, 
     c.drawString(margem, y, "  |  ".join(partes_trilha))
     y -= 0.7 * cm
 
-    # --- Resumo por tipo de papel / formato / diâmetro ---
+    # --- Resumo da carga (tabela: Papel | Itens | Qtd.) ---
     resumo = _defaultdict(int)
     for item in itens:
         resumo[(item.tipo_papel, item.formato_mm, item.diametro_mm)] += item.quantidade
 
+    col_papel_x = margem
+    col_itens_x = margem + 4 * cm
+    col_qtd_x = margem + 7 * cm
+
     c.setFont("Helvetica-Bold", 10)
     c.drawString(margem, y, "Resumo da carga:")
-    y -= 0.5 * cm
+    y -= 0.55 * cm
+
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(col_papel_x, y, "Papel")
+    c.drawRightString(col_itens_x, y, "Itens")
+    c.drawRightString(col_qtd_x, y, "Qtd.")
+    y -= 0.15 * cm
+    c.line(margem, y, col_qtd_x, y)
+    y -= 0.35 * cm
+
     c.setFont("Helvetica", 9)
     total_geral = 0
     for (tipo_papel, formato, diametro), qtd in sorted(resumo.items()):
-        c.drawString(margem, y, f"{tipo_papel} - Formato {formato}mm / Diâmetro {diametro}mm: {qtd} un")
-        y -= 0.4 * cm
+        c.drawString(col_papel_x, y, tipo_papel)
+        c.drawRightString(col_itens_x, y, f"{formato} x {diametro}")
+        c.drawRightString(col_qtd_x, y, str(qtd))
+        y -= 0.42 * cm
         total_geral += qtd
 
+    y -= 0.15 * cm
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(margem, y, f"Total geral: {total_geral} bobinas")
+    c.drawString(margem, y, f"Total Geral: {total_geral}")
     y -= 0.9 * cm
 
     # --- Mapa de carregamento ---
     largura_util = largura_pagina - 2 * margem
     largura_coluna = largura_util / total_fiadas
-    altura_linha = 0.6 * cm
+    altura_linha = 0.85 * cm
 
     for trilha in ["esquerda", "centro", "direita"]:
         if not any(trilha in info["trilhas"] for info in mapa_fiadas.values()):
             continue
 
-        c.setFont("Helvetica-Bold", 9)
+        c.setFont("Helvetica-Bold", 11)
         c.drawString(margem, y, f"Trilha: {NOME_EXIBICAO_PDF[trilha]}")
-        y -= 0.5 * cm
+        y -= 0.65 * cm
 
         for nivel in range(niveis_qtd_max, 0, -1):
             x = margem
-            c.setFont("Helvetica", 8)
+            c.setFont("Helvetica", 11)
             for f in range(1, total_fiadas + 1):
                 info = mapa_fiadas[f]
                 if trilha in info["trilhas"] and nivel <= info["niveis"]:
@@ -255,13 +274,33 @@ def gerar_pdf_cubagem(buffer, veiculo, itens, grade, mapa_fiadas, total_fiadas, 
             y -= altura_linha
 
         x = margem
-        c.setFont("Helvetica", 7)
+        c.setFont("Helvetica", 9)
         for f in range(1, total_fiadas + 1):
             c.drawCentredString(x + largura_coluna / 2, y, str(f))
             x += largura_coluna
-        y -= 0.7 * cm
+        y -= 0.9 * cm
 
     c.save()
+
+TABELA_PACOTES_MM = {
+    100: 6, 120: 6, 130: 6,
+    140: 5, 145: 5, 160: 5,
+    170: 4, 180: 4, 190: 4,
+    200: 3, 210: 3, 220: 3, 230: 3, 240: 3, 250: 3, 260: 3,
+    270: 2, 280: 2, 290: 2, 300: 2, 310: 2, 320: 2, 330: 2,
+    340: 2, 350: 2, 360: 2, 370: 2, 380: 2, 390: 2,
+}
+
+def calcular_formato_real(formato_mm: int, tipo_papel: str) -> int:
+    """Calcula a altura física real da bobina, considerando a regra de empacotamento."""
+    if tipo_papel == "Branca" and formato_mm == 400:
+        return formato_mm * 2  # exceção: 400mm Branca também é pacote (2 unidades)
+
+    qtd_pacote = TABELA_PACOTES_MM.get(formato_mm)
+    if qtd_pacote:
+        return formato_mm * qtd_pacote
+
+    return formato_mm  # não se enquadra em nenhuma regra de pacote
 
 if __name__ == "__main__":
     veiculo = Veiculo(tipo="Truck", comprimento_mm=8000)
