@@ -69,7 +69,7 @@ st.header("2. Itens da Carga (Bobinas)")
 with st.form("form_item", clear_on_submit=True):
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        tipo_papel = st.selectbox("Tipo de papel", ["Tissue", "Mono"])
+        tipo_papel = st.selectbox("Tipo de papel", ["Marron", "Branca"])
     with c2:
         formato_mm = st.number_input("Formato/Altura (mm)", min_value=1, value=600, step=10)
     with c3:
@@ -97,6 +97,7 @@ if st.session_state.itens:
         with col_a:
             st.write(
                 f"**{item.tipo_papel}** — Formato: {item.formato_mm}mm | "
+                f"Formato Real: {item.formato_real_mm}mm | "
                 f"Diâmetro: {item.diametro_mm}mm | Quantidade: {item.quantidade}"
             )
         with col_b:
@@ -167,6 +168,10 @@ if st.session_state.itens:
             st.session_state.itens_restantes = {
                 i: item.quantidade for i, item in enumerate(st.session_state.itens)
             }
+        else:
+            for i, item in enumerate(st.session_state.itens):
+                if i not in st.session_state.itens_restantes:
+                    st.session_state.itens_restantes[i] = item.quantidade
 
         restantes_diametro = {
             i: st.session_state.itens_restantes.get(i, 0)
@@ -341,6 +346,10 @@ if st.session_state.itens:
             st.session_state.itens_restantes = {
                 i: item.quantidade for i, item in enumerate(st.session_state.itens)
             }
+        else:
+            for i, item in enumerate(st.session_state.itens):
+                if i not in st.session_state.itens_restantes:
+                    st.session_state.itens_restantes[i] = item.quantidade
 
         restantes_todos = {
             i: st.session_state.itens_restantes.get(i, 0)
